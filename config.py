@@ -5,7 +5,9 @@ import os
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения из .env файла
-load_dotenv()
+# Сначала загружаем .env, затем .env.local (если есть) для переопределения
+load_dotenv()  # Загружает .env
+load_dotenv('.env.local')  # Переопределяет значения из .env.local, если файл существует
 
 
 def get_api_key(api_id: str) -> str:
