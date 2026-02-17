@@ -42,6 +42,8 @@ wheels/
 # Логи
 *.log
 logs/
+chatlist.log
+chatlist.log.*
 
 # Временные файлы
 *.tmp

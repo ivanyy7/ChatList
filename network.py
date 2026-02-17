@@ -32,7 +32,7 @@ def detect_api_type(api_url: str) -> str:
         api_url: URL API
     
     Returns:
-        Тип API: 'openai', 'deepseek', 'groq' или 'generic'
+        Тип API: 'openai', 'deepseek', 'groq', 'openrouter' или 'generic'
     """
     url_lower = api_url.lower()
     if 'openai.com' in url_lower:
@@ -41,6 +41,8 @@ def detect_api_type(api_url: str) -> str:
         return 'deepseek'
     elif 'groq.com' in url_lower:
         return 'groq'
+    elif 'openrouter.ai' in url_lower or 'openrouter.com' in url_lower:
+        return 'openrouter'
     else:
         return 'generic'
 
@@ -209,6 +211,61 @@ def send_request_to_groq(model: Model, prompt: str, api_key: str, timeout: int =
         return False, f"Неожиданная ошибка: {str(e)}"
 
 
+def send_request_to_openrouter(model: Model, prompt: str, api_key: str, timeout: int = DEFAULT_TIMEOUT) -> Tuple[bool, str]:
+    """
+    Отправить запрос к OpenRouter API.
+    
+    Args:
+        model: Объект Model
+        prompt: Текст промпта
+        api_key: API-ключ
+        timeout: Таймаут запроса в секундах
+    
+    Returns:
+        Кортеж (успешность, ответ или сообщение об ошибке)
+    """
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/your-repo',  # Опционально для OpenRouter
+        'X-Title': 'ChatList'  # Опционально для OpenRouter
+    }
+    
+    # Определяем модель из названия или используем название как есть
+    # OpenRouter поддерживает множество моделей через название
+    model_id = model.name
+    
+    data = {
+        'model': model_id,
+        'messages': [
+            {'role': 'user', 'content': prompt}
+        ],
+        'temperature': 0.7
+    }
+    
+    try:
+        response = requests.post(
+            model.api_url,
+            headers=headers,
+            json=data,
+            timeout=timeout
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        if 'choices' in result and len(result['choices']) > 0:
+            return True, result['choices'][0]['message']['content']
+        else:
+            return False, "Неожиданный формат ответа от API"
+    
+    except requests.exceptions.Timeout:
+        return False, f"Таймаут запроса ({timeout} сек)"
+    except requests.exceptions.RequestException as e:
+        return False, f"Ошибка сети: {str(e)}"
+    except Exception as e:
+        return False, f"Неожиданная ошибка: {str(e)}"
+
+
 def send_request_to_generic(model: Model, prompt: str, api_key: str, timeout: int = DEFAULT_TIMEOUT) -> Tuple[bool, str]:
     """
     Отправить запрос к универсальному API (общий формат).
@@ -293,6 +350,8 @@ def send_request_to_model(model: Model, prompt: str, timeout: int = DEFAULT_TIME
         return send_request_to_deepseek(model, prompt, api_key, timeout)
     elif api_type == 'groq':
         return send_request_to_groq(model, prompt, api_key, timeout)
+    elif api_type == 'openrouter':
+        return send_request_to_openrouter(model, prompt, api_key, timeout)
     else:
         return send_request_to_generic(model, prompt, api_key, timeout)
 

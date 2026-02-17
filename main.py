@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTextEdit, QComboBox, QTableWidget, QTableWidgetItem,
     QCheckBox, QLineEdit, QMessageBox, QDialog, QDialogButtonBox,
-    QHeaderView, QMenuBar, QMenu, QAction, QStatusBar, QProgressBar
+    QHeaderView, QMenuBar, QMenu, QAction, QStatusBar, QProgressBar, QFileDialog
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QCoreApplication
 from PyQt5.QtGui import QFont
@@ -21,6 +21,8 @@ from PyQt5.QtGui import QFont
 import db
 from models import Model, load_models_from_db, get_active_models_list
 from network import send_to_all_models
+from export import export_to_markdown, export_to_json
+from logger import get_logger, log_request, log_action
 
 
 class RequestThread(QThread):
@@ -240,11 +242,28 @@ class ModelsDialog(QDialog):
         dialog = ModelDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             data = dialog.get_data()
-            if not all([data['name'], data['api_url'], data['api_id']]):
-                QMessageBox.warning(self, "Ошибка", "Заполните все поля")
+            # Валидация полей
+            if not data['name'] or not data['name'].strip():
+                QMessageBox.warning(self, "Ошибка", "Введите название модели")
                 return
-            db.create_model(data['name'], data['api_url'], data['api_id'], data['is_active'])
-            self.load_models()
+            if not data['api_url'] or not data['api_url'].strip():
+                QMessageBox.warning(self, "Ошибка", "Введите URL API")
+                return
+            if not data['api_id'] or not data['api_id'].strip():
+                QMessageBox.warning(self, "Ошибка", "Введите идентификатор API-ключа")
+                return
+            
+            # Проверка формата URL
+            if not (data['api_url'].startswith('http://') or data['api_url'].startswith('https://')):
+                QMessageBox.warning(self, "Ошибка", "URL должен начинаться с http:// или https://")
+                return
+            
+            try:
+                db.create_model(data['name'], data['api_url'], data['api_id'], data['is_active'])
+                self.load_models()
+                log_action(get_logger(), "Добавлена модель", data['name'])
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось добавить модель: {str(e)}")
     
     def edit_model(self):
         """Редактировать выбранную модель."""
@@ -261,8 +280,28 @@ class ModelsDialog(QDialog):
             dialog = ModelDialog(self, model)
             if dialog.exec_() == QDialog.Accepted:
                 data = dialog.get_data()
-                db.update_model(model_id, data['name'], data['api_url'], data['api_id'], data['is_active'])
-                self.load_models()
+                # Валидация полей
+                if not data['name'] or not data['name'].strip():
+                    QMessageBox.warning(self, "Ошибка", "Введите название модели")
+                    return
+                if not data['api_url'] or not data['api_url'].strip():
+                    QMessageBox.warning(self, "Ошибка", "Введите URL API")
+                    return
+                if not data['api_id'] or not data['api_id'].strip():
+                    QMessageBox.warning(self, "Ошибка", "Введите идентификатор API-ключа")
+                    return
+                
+                # Проверка формата URL
+                if not (data['api_url'].startswith('http://') or data['api_url'].startswith('https://')):
+                    QMessageBox.warning(self, "Ошибка", "URL должен начинаться с http:// или https://")
+                    return
+                
+                try:
+                    db.update_model(model_id, data['name'], data['api_url'], data['api_id'], data['is_active'])
+                    self.load_models()
+                    log_action(get_logger(), "Обновлена модель", data['name'])
+                except Exception as e:
+                    QMessageBox.critical(self, "Ошибка", f"Не удалось обновить модель: {str(e)}")
     
     def delete_model(self):
         """Удалить выбранную модель."""
@@ -374,9 +413,14 @@ class MainWindow(QMainWindow):
         # Временная таблица результатов (в памяти)
         self.temp_results: List[Dict] = []
         self.current_prompt_id: Optional[int] = None
+        self.current_prompt_text: str = ""
         
         # Инициализация БД
         db.init_database()
+        
+        # Инициализация логгера
+        self.logger = get_logger()
+        log_action(self.logger, "Запуск приложения")
         
         # Создание интерфейса
         self.init_ui()
@@ -417,6 +461,7 @@ class MainWindow(QMainWindow):
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setPlaceholderText("Введите ваш промпт здесь...")
         self.prompt_edit.setMaximumHeight(100)
+        self.prompt_edit.setToolTip("Введите текст промпта, который будет отправлен во все активные модели")
         prompt_layout.addWidget(self.prompt_edit)
         
         # Поле для тегов
@@ -430,6 +475,7 @@ class MainWindow(QMainWindow):
         # Кнопка отправки
         self.send_button = QPushButton("Отправить")
         self.send_button.clicked.connect(self.send_requests)
+        self.send_button.setToolTip("Отправить промпт во все активные модели")
         prompt_layout.addWidget(self.send_button)
         
         main_layout.addWidget(prompt_group)
@@ -450,12 +496,15 @@ class MainWindow(QMainWindow):
         self.save_button = QPushButton("Сохранить выбранные")
         self.save_button.clicked.connect(self.save_selected_results)
         self.save_button.setEnabled(False)
+        self.save_button.setToolTip("Сохранить выбранные результаты в базу данных")
         
         self.clear_button = QPushButton("Очистить")
         self.clear_button.clicked.connect(self.clear_results)
+        self.clear_button.setToolTip("Очистить таблицу результатов")
         
         self.new_request_button = QPushButton("Новый запрос")
         self.new_request_button.clicked.connect(self.new_request)
+        self.new_request_button.setToolTip("Очистить форму и подготовиться к новому запросу")
         
         buttons_layout.addWidget(self.save_button)
         buttons_layout.addWidget(self.clear_button)
@@ -494,6 +543,16 @@ class MainWindow(QMainWindow):
         view_results_action = QAction("Сохранённые результаты", self)
         view_results_action.triggered.connect(self.show_results_dialog)
         results_menu.addAction(view_results_action)
+        
+        # Подменю экспорта
+        export_menu = results_menu.addMenu("Экспорт")
+        export_markdown_action = QAction("Экспорт в Markdown", self)
+        export_markdown_action.triggered.connect(self.export_to_markdown)
+        export_menu.addAction(export_markdown_action)
+        
+        export_json_action = QAction("Экспорт в JSON", self)
+        export_json_action.triggered.connect(self.export_to_json)
+        export_menu.addAction(export_json_action)
         
         # Меню "Настройки"
         settings_menu = menubar.addMenu("Настройки")
@@ -565,6 +624,9 @@ class MainWindow(QMainWindow):
         # Сохраняем промпт в БД
         tags = self.tags_edit.text().strip() or None
         self.current_prompt_id = db.create_prompt(prompt_text, tags)
+        self.current_prompt_text = prompt_text
+        
+        log_action(self.logger, "Отправка запросов", f"К {len(active_models)} моделям")
         
         # Очищаем предыдущие результаты
         self.clear_results()
@@ -594,6 +656,10 @@ class MainWindow(QMainWindow):
             success = result['success']
             response = result['response']
             
+            # Логируем результат
+            log_request(self.logger, model.name, self.current_prompt_text, success, 
+                      response if success else "", response if not success else "")
+            
             # Название модели
             model_item = QTableWidgetItem(model.name)
             if not success:
@@ -621,7 +687,9 @@ class MainWindow(QMainWindow):
         
         self.results_table.resizeColumnsToContents()
         self.save_button.setEnabled(True)
-        self.statusBar.showMessage(f"Получено {len([r for r in results if r['success']])} ответов из {len(results)}")
+        success_count = len([r for r in results if r['success']])
+        self.statusBar.showMessage(f"Получено {success_count} ответов из {len(results)}")
+        log_action(self.logger, "Запросы завершены", f"Успешно: {success_count}/{len(results)}")
     
     def save_selected_results(self):
         """Сохранить выбранные результаты в БД."""
@@ -644,6 +712,7 @@ class MainWindow(QMainWindow):
                 saved_count += 1
         
         if saved_count > 0:
+            log_action(self.logger, "Сохранение результатов", f"Сохранено: {saved_count}")
             QMessageBox.information(self, "Успех", f"Сохранено результатов: {saved_count}")
             self.clear_results()
         else:
@@ -676,6 +745,48 @@ class MainWindow(QMainWindow):
             if 'QT_AUDIO_DEVICE' in os.environ:
                 del os.environ['QT_AUDIO_DEVICE']
             QMessageBox.information(self, "Настройки", "Звуки включены. Перезапустите приложение для применения изменений.")
+    
+    def export_to_markdown(self):
+        """Экспортировать текущие результаты в Markdown."""
+        if not self.temp_results:
+            QMessageBox.warning(self, "Ошибка", "Нет результатов для экспорта")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить как Markdown",
+            f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+            "Markdown Files (*.md);;All Files (*)"
+        )
+        
+        if file_path:
+            success = export_to_markdown(self.temp_results, self.current_prompt_text, file_path)
+            if success:
+                log_action(self.logger, "Экспорт в Markdown", f"Файл: {file_path}")
+                QMessageBox.information(self, "Успех", f"Результаты экспортированы в {file_path}")
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось экспортировать результаты")
+    
+    def export_to_json(self):
+        """Экспортировать текущие результаты в JSON."""
+        if not self.temp_results:
+            QMessageBox.warning(self, "Ошибка", "Нет результатов для экспорта")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить как JSON",
+            f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        
+        if file_path:
+            success = export_to_json(self.temp_results, self.current_prompt_text, file_path)
+            if success:
+                log_action(self.logger, "Экспорт в JSON", f"Файл: {file_path}")
+                QMessageBox.information(self, "Успех", f"Результаты экспортированы в {file_path}")
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось экспортировать результаты")
 
 
 def main():
