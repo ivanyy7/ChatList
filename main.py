@@ -14,10 +14,10 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QComboBox, QTableWidget, QTableWidgetItem,
     QCheckBox, QLineEdit, QMessageBox, QDialog, QDialogButtonBox,
     QHeaderView, QMenuBar, QMenu, QAction, QActionGroup, QStatusBar, QProgressBar, QFileDialog,
-    QTextBrowser
+    QTextBrowser, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QCoreApplication
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QCoreApplication, QTimer, QRectF
+from PyQt5.QtGui import QFont, QPalette, QColor, QPainter, QLinearGradient, QBrush
 
 import db
 import markdown
@@ -966,6 +966,45 @@ class MarkdownViewerDialog(QDialog):
         self.setLayout(layout)
 
 
+class MovingSegmentBar(QWidget):
+    """Полоса с бегунком: слева насыщенный янтарно-зелёный, справа плавный сход в прозрачность (эффект «хвоста»)."""
+    SEGMENT_WIDTH = 35  # длина бегунка в пикселях
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(10)
+        self._value = 0.0  # 0–100, позиция отрезка (float для плавности)
+
+    def setValue(self, value: float):
+        self._value = max(0.0, min(100.0, float(value)))
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        qp = QPainter(self)
+        qp.setRenderHint(QPainter.Antialiasing)
+        qp.setRenderHint(QPainter.SmoothPixmapTransform)
+        w, h = self.width(), self.height()
+        if w < self.SEGMENT_WIDTH or h <= 0:
+            return
+        # Фон (трек)
+        qp.setPen(Qt.NoPen)
+        qp.setBrush(QColor("#2a2a2a"))
+        qp.drawRoundedRect(0, 0, w, h, 5, 5)
+        # Бегунок: позиция в пикселях с дробной частью для плавного движения
+        x = (self._value / 100.0) * (w - self.SEGMENT_WIDTH)
+        grad = QLinearGradient(x, 0, x + self.SEGMENT_WIDTH, 0)
+        head = QColor(154, 205, 50)   # насыщенный янтарно-зелёный #9acd32
+        head.setAlpha(255)
+        tail = QColor(184, 212, 168)  # тот же тон
+        tail.setAlpha(0)
+        grad.setColorAt(0, head)
+        grad.setColorAt(1, tail)
+        qp.setBrush(QBrush(grad))
+        qp.drawRoundedRect(QRectF(x, 0, self.SEGMENT_WIDTH, h), 5, 5)
+        qp.end()
+
+
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
     
@@ -1030,11 +1069,11 @@ class MainWindow(QMainWindow):
         select_layout.addWidget(select_button)
         prompt_layout.addLayout(select_layout)
         
-        # Поле ввода промпта
+        # Поле ввода промпта (адаптивная высота: минимум 3 строки, растягивается при увеличении окна)
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setPlaceholderText("Введите ваш промпт здесь...")
-        # Высота поля: 3 строки (примерно 24 пикселя на строку = 72 пикселя)
-        self.prompt_edit.setFixedHeight(72)
+        self.prompt_edit.setMinimumHeight(72)
+        self.prompt_edit.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.prompt_edit.setToolTip("Введите текст промпта, который будет отправлен во все активные модели")
         prompt_layout.addWidget(self.prompt_edit)
         
@@ -1052,13 +1091,24 @@ class MainWindow(QMainWindow):
         self.send_button.setToolTip("Отправить промпт во все активные модели")
         prompt_layout.addWidget(self.send_button)
         
-        main_layout.addWidget(prompt_group)
+        # Полоса ожидания: движущийся прямоугольник с градиентом (под кнопкой «Отправить»)
+        self.request_progress_bar = MovingSegmentBar(self)
+        self.request_progress_bar.setValue(0)
+        self.request_progress_bar.setVisible(False)
+        prompt_layout.addWidget(self.request_progress_bar)
+        self.request_progress_timer = QTimer(self)
+        self.request_progress_timer.timeout.connect(self._animate_request_progress)
+        self._request_progress_value = 0
         
+        # Верхний блок (промпт) — доля 1 при растяжении
+        main_layout.addWidget(prompt_group, 1)
+
         # Таблица результатов
         results_label = QLabel("Результаты:")
         main_layout.addWidget(results_label)
-        
+
         self.results_table = QTableWidget()
+        self.results_table.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.results_table.setColumnCount(3)
         self.results_table.setHorizontalHeaderLabels(["Модель", "Ответ", "Выбрано"])
         self.results_table.setWordWrap(True)
@@ -1074,7 +1124,8 @@ class MainWindow(QMainWindow):
         self.results_table.verticalHeader().setFixedWidth(20)  # Ширина столбца с номерами строк
         # Минимальная высота строки для колонки "Ответ" (примерно 4–5 строк текста)
         self.results_table.verticalHeader().setDefaultSectionSize(100)
-        main_layout.addWidget(self.results_table)
+        # Таблица результатов — доля 2, забирает оставшееся пространство по высоте
+        main_layout.addWidget(self.results_table, 2)
         
         # Кнопки управления результатами
         buttons_layout = QHBoxLayout()
@@ -1229,6 +1280,13 @@ class MainWindow(QMainWindow):
         dialog = ResultsDialog(self)
         dialog.exec_()
     
+    def _animate_request_progress(self):
+        """Плавная анимация полосы ожидания (~50 FPS, малый шаг)."""
+        self._request_progress_value += 0.4  # полный цикл ~5 с при интервале 20 мс
+        if self._request_progress_value >= 100:
+            self._request_progress_value = 0.0
+        self.request_progress_bar.setValue(self._request_progress_value)
+    
     def send_requests(self):
         """Отправить запросы ко всем активным моделям."""
         prompt_text = self.prompt_edit.toPlainText().strip()
@@ -1262,6 +1320,12 @@ class MainWindow(QMainWindow):
         self.send_button.setEnabled(False)
         self.statusBar.showMessage(f"Отправка запросов к {len(active_models)} моделям...")
         
+        # Полоса ожидания под кнопкой: плавная анимация (20 мс ≈ 50 FPS, дробный шаг позиции)
+        self._request_progress_value = 0.0
+        self.request_progress_bar.setValue(0)
+        self.request_progress_bar.setVisible(True)
+        self.request_progress_timer.start(20)
+        
         # Создаём поток для выполнения запросов (с дополненным промптом)
         self.request_thread = RequestThread(active_models, enhanced_prompt)
         self.request_thread.finished.connect(self.on_requests_finished)
@@ -1270,6 +1334,8 @@ class MainWindow(QMainWindow):
     def on_requests_finished(self, results: List[Dict]):
         """Обработчик завершения запросов."""
         self.progress_bar.setVisible(False)
+        self.request_progress_timer.stop()
+        self.request_progress_bar.setVisible(False)
         self.send_button.setEnabled(True)
         
         # Обновляем таблицу результатов
