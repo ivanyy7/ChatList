@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatList — Сравнение ответов нейросетей</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --accent: #00d4aa;
+      --accent-dim: #00a887;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem;
+    }
+    header {
+      margin-bottom: 3rem;
+    }
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, var(--accent), #7dd3fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .tagline {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+    .download {
+      display: inline-block;
+      margin: 2rem 0 3rem;
+      padding: 1rem 2rem;
+      background: var(--accent);
+      color: var(--bg);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.1rem;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+    .download:hover {
+      background: var(--accent-dim);
+    }
+    .features {
+      list-style: none;
+      margin-top: 2rem;
+    }
+    .features li {
+      padding: 0.75rem 0;
+      padding-left: 2rem;
+      position: relative;
+      color: var(--text-muted);
+    }
+    .features li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    section {
+      margin-bottom: 2.5rem;
+    }
+    h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text);
+    }
+    p {
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+    .links {
+      margin-top: 2rem;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.95rem;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--surface);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ChatList</h1>
+      <p class="tagline">Сравнение ответов нейросетей</p>
+      <a href="https://github.com/ivanyy7/ChatList/releases/latest" class="download">Скачать для Windows</a>
+    </header>
+
+    <section>
+      <h2>О программе</h2>
+      <p>
+        ChatList — приложение для отправки одного промпта в несколько нейросетей и сравнения их ответов. 
+        Введите запрос, выберите модели и получите ответы в удобной таблице.
+      </p>
+    </section>
+
+    <section>
+      <h2>Возможности</h2>
+      <ul class="features">
+        <li>Отправка промпта в несколько моделей одновременно</li>
+        <li>Сохранение промптов и результатов в базу данных</li>
+        <li>Экспорт в Markdown и JSON</li>
+        <li>Управление моделями через удобный интерфейс</li>
+        <li>AI-улучшение промптов</li>
+        <li>Логирование всех запросов и действий</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Поддерживаемые API</h2>
+      <p>
+        OpenAI, DeepSeek, Groq, OpenRouter, HuggingFace и другие совместимые с OpenAI API.
+      </p>
+    </section>
+
+    <div class="links">
+      <a href="https://github.com/ivanyy7/ChatList">Исходный код</a>
+      <a href="https://github.com/ivanyy7/ChatList/releases">Все релизы</a>
+    </div>
+
+    <footer>
+      ChatList — проект с открытым исходным кодом. Для работы требуется API-ключ.
+    </footer>
+  </div>
+</body>
+</html>

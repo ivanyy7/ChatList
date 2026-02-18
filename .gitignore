@@ -51,6 +51,8 @@ chatlist.log.*
 
 # PyInstaller
 *.spec
+!ChatList.spec
+version_info.txt  # Генерируется из version.py при сборке
 
 # OS
 .DS_Store

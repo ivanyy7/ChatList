@@ -26,6 +26,7 @@ from network import send_to_all_models
 from export import export_to_markdown, export_to_json
 from logger import get_logger, log_request, log_action
 from prompt_improver import improve_prompt_with_alternatives
+from version import __version__
 
 
 # Ключ настройки темы в БД
@@ -1504,7 +1505,7 @@ class AboutDialog(QDialog):
         layout.addWidget(title_label)
         
         # Версия
-        version_label = QLabel("Версия 1.0.0")
+        version_label = QLabel(f"Версия {__version__}")
         version_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(version_label)
         
@@ -1615,7 +1616,7 @@ class MainWindow(QMainWindow):
         
         # Инициализация логгера
         self.logger = get_logger()
-        log_action(self.logger, "Запуск приложения")
+        log_action(self.logger, "Запуск приложения", f"Версия {__version__}")
         
         # Создание интерфейса
         self.init_ui()
