@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QTextBrowser, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QCoreApplication, QTimer, QRectF
-from PyQt5.QtGui import QFont, QPalette, QColor, QPainter, QLinearGradient, QBrush
+from PyQt5.QtGui import QFont, QPalette, QColor, QPainter, QLinearGradient, QBrush, QIcon
 
 import db
 import markdown
@@ -1763,6 +1763,11 @@ def main():
     QCoreApplication.setAttribute(Qt.AA_DisableWindowContextHelpButton)
     
     app = QApplication(sys.argv)
+    
+    # Устанавливаем иконку приложения
+    icon_path = "app.ico"
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     # Применяем сохранённую тему (светлая / тёмная / системная)
     saved_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
