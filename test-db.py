@@ -184,10 +184,17 @@ class DatabaseViewer(QMainWindow):
         
         self.history_combo = QComboBox()
         self.history_combo.setEditable(False)
-        self.history_combo.currentTextChanged.connect(self.on_history_file_selected)
+        # Временно отключаем сигнал при загрузке истории, чтобы избежать автоматической загрузки файла
+        self.loading_history = False
         self.history_combo.currentIndexChanged.connect(self.on_history_index_changed)
         self.history_combo.setMinimumWidth(400)
         history_row_layout.addWidget(self.history_combo)
+        
+        self.load_from_history_btn = QPushButton("📂 Загрузить")
+        self.load_from_history_btn.setToolTip("Загрузить выбранный файл из истории")
+        self.load_from_history_btn.clicked.connect(self.load_selected_from_history)
+        self.load_from_history_btn.setEnabled(False)
+        history_row_layout.addWidget(self.load_from_history_btn)
         
         self.remove_from_history_btn = QPushButton("🗑️ Удалить из истории")
         self.remove_from_history_btn.setToolTip("Удалить выбранный файл из истории")
@@ -199,9 +206,6 @@ class DatabaseViewer(QMainWindow):
         
         file_group.setLayout(file_layout)
         layout.addWidget(file_group)
-        
-        # Загружаем историю при инициализации
-        self.load_history()
         
         # Панель выбора таблицы
         table_group = QGroupBox("Выбор таблицы")
@@ -288,10 +292,9 @@ class DatabaseViewer(QMainWindow):
         # Настройка выделения целых строк вместо отдельных ячеек
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        # Настройка растягивания колонок на всю ширину
+        # Настройка заголовка таблицы
         header = self.table_widget.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setStretchLastSection(False)
         # Обработчик клика по пустому месту для снятия выделения
         self.table_widget.viewport().installEventFilter(self)
         view_layout.addWidget(self.table_widget, 1)  # stretch factor = 1 для растягивания
@@ -361,6 +364,9 @@ class DatabaseViewer(QMainWindow):
         self.tabs.setEnabled(False)
         self.refresh_btn.setEnabled(False)
         
+        # Загружаем историю после создания всех элементов UI
+        self.load_history()
+        
         # Применяем начальную тему
         self.apply_theme()
     
@@ -372,6 +378,13 @@ class DatabaseViewer(QMainWindow):
             self.apply_window_theme(True)
         else:
             self.apply_window_theme(False)
+    
+    def resizeEvent(self, event):
+        """Обработчик изменения размера окна."""
+        super().resizeEvent(event)
+        # Пересчитываем ширину колонок при изменении размера окна
+        if self.table_widget and self.current_table:
+            self.adjust_column_widths()
     
     def apply_window_theme(self, dark: bool):
         """Применить тему к заголовку окна Windows."""
@@ -399,23 +412,33 @@ class DatabaseViewer(QMainWindow):
                 with open(self.history_file, 'r', encoding='utf-8') as f:
                     history = json.load(f)
                     # Фильтруем только существующие файлы
+                    original_history = history.copy()
                     history = [path for path in history if os.path.exists(path)]
                     # Сохраняем отфильтрованную историю
-                    if len(history) != len(json.load(open(self.history_file, 'r', encoding='utf-8'))):
+                    if len(history) != len(original_history):
                         self.save_history(history)
             else:
                 history = []
         except Exception:
             history = []
         
+        # Временно отключаем сигнал при загрузке истории
+        self.loading_history = True
+        self.history_combo.blockSignals(True)
+        
         # Обновляем комбобокс истории
         self.history_combo.clear()
         if history:
             self.history_combo.addItems(history)
             self.remove_from_history_btn.setEnabled(True)
+            self.load_from_history_btn.setEnabled(True)
         else:
             self.history_combo.addItem("(нет истории)")
             self.remove_from_history_btn.setEnabled(False)
+            self.load_from_history_btn.setEnabled(False)
+        
+        self.history_combo.blockSignals(False)
+        self.loading_history = False
     
     def save_history(self, history: Optional[List[str]] = None):
         """Сохранить историю файлов в JSON."""
@@ -463,9 +486,11 @@ class DatabaseViewer(QMainWindow):
             if history:
                 self.history_combo.addItems(history)
                 self.remove_from_history_btn.setEnabled(True)
+                self.load_from_history_btn.setEnabled(True)
             else:
                 self.history_combo.addItem("(нет истории)")
                 self.remove_from_history_btn.setEnabled(False)
+                self.load_from_history_btn.setEnabled(False)
             self.history_combo.blockSignals(False)
             
             # Сохраняем в файл
@@ -499,9 +524,11 @@ class DatabaseViewer(QMainWindow):
             if history:
                 self.history_combo.addItems(history)
                 self.remove_from_history_btn.setEnabled(True)
+                self.load_from_history_btn.setEnabled(True)
             else:
                 self.history_combo.addItem("(нет истории)")
                 self.remove_from_history_btn.setEnabled(False)
+                self.load_from_history_btn.setEnabled(False)
             
             # Сохраняем в файл
             self.save_history(history)
@@ -509,12 +536,13 @@ class DatabaseViewer(QMainWindow):
     def on_history_index_changed(self, index: int):
         """Обработчик изменения индекса в истории."""
         current_text = self.history_combo.currentText()
-        self.remove_from_history_btn.setEnabled(
-            current_text != "(нет истории)" and current_text != ""
-        )
+        is_valid = current_text != "(нет истории)" and current_text != ""
+        self.remove_from_history_btn.setEnabled(is_valid)
+        self.load_from_history_btn.setEnabled(is_valid)
     
-    def on_history_file_selected(self, file_path: str):
-        """Обработчик выбора файла из истории."""
+    def load_selected_from_history(self):
+        """Загрузить выбранный файл из истории."""
+        file_path = self.history_combo.currentText()
         if file_path == "(нет истории)" or not file_path:
             return
         
@@ -575,6 +603,10 @@ class DatabaseViewer(QMainWindow):
     def load_tables(self):
         """Загрузить список таблиц из базы данных."""
         if not self.conn:
+            return
+        
+        # Проверяем, что table_combo уже создан
+        if not hasattr(self, 'table_combo') or self.table_combo is None:
             return
         
         try:
@@ -695,10 +727,10 @@ class DatabaseViewer(QMainWindow):
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Только для чтения
                         self.table_widget.setItem(row_idx, col_idx, item)
                 
-                # Применяем растягивание колонок на всю ширину
-                header = self.table_widget.horizontalHeader()
-                header.setStretchLastSection(True)
-                header.setSectionResizeMode(QHeaderView.Stretch)
+                # Настраиваем ширину колонок: id и is_active - 25px с пропорциональным масштабированием
+                # Используем QTimer для отложенного вызова, чтобы таблица успела отрисоваться
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(100, self.adjust_column_widths)
             else:
                 self.table_widget.setRowCount(0)
                 self.table_widget.setColumnCount(0)
@@ -708,6 +740,68 @@ class DatabaseViewer(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить данные:\n{e}")
+    
+    def adjust_column_widths(self):
+        """Настроить ширину колонок: id и is_active - 25px с пропорциональным масштабированием."""
+        if not self.table_widget or not self.current_table:
+            return
+        
+        header = self.table_widget.horizontalHeader()
+        columns = [self.table_widget.horizontalHeaderItem(i).text() 
+                  for i in range(self.table_widget.columnCount())]
+        
+        if not columns:
+            return
+        
+        base_width = 25  # Базовая ширина для id и is_active
+        fixed_columns = ['id', 'is_active']
+        
+        # Определяем общую ширину таблицы
+        table_width = self.table_widget.viewport().width()
+        if table_width <= 0:
+            table_width = self.table_widget.width() - 20  # Примерная ширина с учетом скроллбара
+        
+        # Подсчитываем количество колонок для растягивания и фиксированных
+        stretch_columns = [col for col in columns if col.lower() not in fixed_columns]
+        fixed_cols = [col for col in columns if col.lower() in fixed_columns]
+        stretch_columns_count = len(stretch_columns)
+        fixed_columns_count = len(fixed_cols)
+        
+        # Вычисляем ширину для фиксированных колонок (пропорционально размеру окна)
+        if table_width > 0 and fixed_columns_count > 0:
+            # Минимальная ширина для фиксированных колонок
+            min_fixed_width = base_width
+            # Масштабируем пропорционально размеру окна (но не меньше минимума)
+            scale_factor = max(1.0, table_width / 800)  # Базовый размер окна 800px
+            fixed_width = max(min_fixed_width, int(base_width * scale_factor))
+            
+            # Вычисляем доступную ширину для растягивающихся колонок
+            available_width = table_width - (fixed_width * fixed_columns_count)
+            if stretch_columns_count > 0:
+                stretch_width = max(100, available_width // stretch_columns_count)
+            else:
+                stretch_width = 100
+        else:
+            fixed_width = base_width
+            stretch_width = 150
+        
+        # Применяем настройки к каждой колонке
+        for col_idx, col_name in enumerate(columns):
+            col_name_lower = col_name.lower()
+            if col_name_lower in fixed_columns:
+                # Фиксированные колонки с минимальной шириной и пропорциональным масштабированием
+                header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+                header.setMinimumSectionSize(base_width)
+                header.resizeSection(col_idx, fixed_width)
+            else:
+                # Остальные колонки растягиваются
+                header.setSectionResizeMode(col_idx, QHeaderView.Stretch)
+        
+        # Последняя колонка растягивается на оставшееся пространство
+        if len(columns) > 0:
+            last_col_idx = len(columns) - 1
+            if columns[last_col_idx].lower() not in fixed_columns:
+                header.setSectionResizeMode(last_col_idx, QHeaderView.Stretch)
     
     def update_crud_combos(self, data: List[Dict]):
         """Обновить комбобоксы для редактирования и удаления."""
