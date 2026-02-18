@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QComboBox, QTableWidget, QTableWidgetItem,
     QCheckBox, QLineEdit, QMessageBox, QDialog, QDialogButtonBox,
     QHeaderView, QMenuBar, QMenu, QAction, QActionGroup, QStatusBar, QProgressBar, QFileDialog,
-    QTextBrowser, QSizePolicy
+    QTextBrowser, QSizePolicy, QSpinBox, QGroupBox, QRadioButton, QButtonGroup
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QCoreApplication, QTimer, QRectF
 from PyQt5.QtGui import QFont, QPalette, QColor, QPainter, QLinearGradient, QBrush, QIcon
@@ -667,6 +667,68 @@ class ResultsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Сохранённые результаты")
         self.setMinimumSize(900, 600)
+        self.resize(1000, 700)
+        
+        # Проверяем текущую тему
+        current_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
+        is_dark = current_theme == THEME_DARK
+        
+        # Применяем тёмную тему к диалогу, если выбрана тёмная тема
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #353535;
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QLineEdit {
+                    background-color: #2a2a2a;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                    padding: 4px;
+                    border-radius: 3px;
+                }
+                QTableWidget {
+                    background-color: #2a2a2a;
+                    color: #ffffff;
+                    gridline-color: #555555;
+                    selection-background-color: #2a82da;
+                }
+                QHeaderView::section {
+                    background-color: #353535;
+                    color: #ffffff;
+                    padding: 4px;
+                    border: 1px solid #555555;
+                }
+                QPushButton {
+                    background-color: #353535;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                    padding: 6px 20px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #2a82da;
+                    border-color: #2a82da;
+                }
+                QPushButton:pressed {
+                    background-color: #1e5fa0;
+                }
+                QPushButton:disabled {
+                    background-color: #2a2a2a;
+                    color: #888888;
+                    border-color: #444444;
+                }
+            """)
+            # Тёмная полоса заголовка для Windows
+            app = QApplication.instance()
+            if app:
+                _set_windows_dark_title_bar(app, dark=True)
+        
+        # Хранилище полных текстов результатов
+        self.full_results: List[Dict] = []
         
         layout = QVBoxLayout()
         
@@ -674,6 +736,7 @@ class ResultsDialog(QDialog):
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("Поиск:"))
         self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Введите текст для поиска...")
         self.search_edit.textChanged.connect(self.search_results)
         search_layout.addWidget(self.search_edit)
         layout.addLayout(search_layout)
@@ -682,49 +745,140 @@ class ResultsDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["ID", "Промпт ID", "Модель", "Ответ", "Дата"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        
+        # Настраиваем колонки
+        self.table.setColumnWidth(0, 50)  # ID
+        self.table.setColumnWidth(1, 80)  # Промпт ID
+        self.table.setColumnWidth(2, 200)  # Модель
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # Ответ растягивается
+        self.table.setColumnWidth(4, 150)  # Дата
+        
+        # Настраиваем отображение строк - компактное, без пропусков
+        self.table.setWordWrap(False)  # Отключаем перенос текста для компактности
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)  # Фиксированная высота строк
+        self.table.verticalHeader().setDefaultSectionSize(40)  # Компактная высота строк
+        self.table.verticalHeader().setVisible(False)  # Скрываем номера строк для экономии места
+        
+        # Включаем выбор строк
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        
+        # Подключаем двойной клик для открытия
+        self.table.itemDoubleClicked.connect(self.open_selected_result)
+        
         layout.addWidget(self.table)
         
-        # Кнопка закрытия
+        # Кнопки управления
+        buttons_layout = QHBoxLayout()
+        
+        self.open_button = QPushButton("Открыть")
+        self.open_button.clicked.connect(self.open_selected_result)
+        self.open_button.setEnabled(False)
+        self.open_button.setToolTip("Открыть выбранный результат в формате Markdown")
+        buttons_layout.addWidget(self.open_button)
+        
+        buttons_layout.addStretch()
+        
         close_button = QPushButton("Закрыть")
         close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button)
+        buttons_layout.addWidget(close_button)
+        
+        layout.addLayout(buttons_layout)
+        
+        # Подключаем сигнал изменения выбора
+        self.table.itemSelectionChanged.connect(self.on_selection_changed)
         
         self.setLayout(layout)
         self.load_results()
     
+    def on_selection_changed(self):
+        """Обработчик изменения выбора в таблице."""
+        has_selection = len(self.table.selectedItems()) > 0
+        self.open_button.setEnabled(has_selection)
+    
     def load_results(self):
         """Загрузить результаты в таблицу."""
-        results = db.get_all_results()
+        self.full_results = db.get_all_results()
+        self.update_table(self.full_results)
+    
+    def update_table(self, results: List[Dict]):
+        """Обновить таблицу с результатами."""
         self.table.setRowCount(len(results))
         
         for row, result in enumerate(results):
             self.table.setItem(row, 0, QTableWidgetItem(str(result['id'])))
             self.table.setItem(row, 1, QTableWidgetItem(str(result['prompt_id'])))
             self.table.setItem(row, 2, QTableWidgetItem(result['model_name']))
-            # Обрезаем длинный текст ответа
-            response_text = result['response_text'][:200] + "..." if len(result['response_text']) > 200 else result['response_text']
-            self.table.setItem(row, 3, QTableWidgetItem(response_text))
+            
+            # Показываем текст ответа (обрезаем для компактности, полный текст в tooltip)
+            response_text = result['response_text'] or ""
+            # Обрезаем до 100 символов для компактного отображения
+            display_text = response_text[:100] + "..." if len(response_text) > 100 else response_text
+            response_item = QTableWidgetItem(display_text)
+            response_item.setToolTip(response_text)  # Полный текст в подсказке
+            self.table.setItem(row, 3, response_item)
+            
             self.table.setItem(row, 4, QTableWidgetItem(result['created_at']))
         
-        self.table.resizeColumnsToContents()
+        # Устанавливаем фиксированную высоту для всех строк (компактное отображение)
+        for row in range(self.table.rowCount()):
+            self.table.setRowHeight(row, 40)
     
     def search_results(self):
         """Поиск результатов."""
-        query = self.search_edit.text()
+        query = self.search_edit.text().strip().lower()
         if query:
-            results = db.search_results(query)
+            # Фильтруем результаты по запросу
+            filtered_results = [
+                r for r in self.full_results
+                if query in str(r['id']).lower() or
+                   query in str(r['prompt_id']).lower() or
+                   query in r['model_name'].lower() or
+                   query in (r['response_text'] or "").lower() or
+                   query in (r['created_at'] or "").lower()
+            ]
+            self.update_table(filtered_results)
         else:
-            results = db.get_all_results()
+            self.update_table(self.full_results)
+    
+    def open_selected_result(self):
+        """Открыть выбранный результат в формате Markdown."""
+        selected_rows = self.table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Предупреждение", "Выберите результат для просмотра")
+            return
         
-        self.table.setRowCount(len(results))
-        for row, result in enumerate(results):
-            self.table.setItem(row, 0, QTableWidgetItem(str(result['id'])))
-            self.table.setItem(row, 1, QTableWidgetItem(str(result['prompt_id'])))
-            self.table.setItem(row, 2, QTableWidgetItem(result['model_name']))
-            response_text = result['response_text'][:200] + "..." if len(result['response_text']) > 200 else result['response_text']
-            self.table.setItem(row, 3, QTableWidgetItem(response_text))
-            self.table.setItem(row, 4, QTableWidgetItem(result['created_at']))
+        row = selected_rows[0].row()
+        if row < 0 or row >= self.table.rowCount():
+            return
+        
+        # Получаем данные из таблицы напрямую
+        id_item = self.table.item(row, 0)
+        model_item = self.table.item(row, 2)
+        response_item = self.table.item(row, 3)
+        
+        if not id_item or not model_item or not response_item:
+            return
+        
+        # Получаем полный текст ответа из базы данных по ID
+        result_id = int(id_item.text())
+        result = next((r for r in self.full_results if r['id'] == result_id), None)
+        
+        if not result:
+            # Если не нашли в полном списке, используем данные из таблицы
+            response_text = response_item.text()
+            model_name = model_item.text()
+        else:
+            response_text = result['response_text'] or ""
+            model_name = result['model_name']
+        
+        # Открываем диалог просмотра Markdown
+        dialog = MarkdownViewerDialog(
+            self,
+            title=f"Ответ от {model_name}",
+            content=response_text
+        )
+        dialog.exec_()
 
 
 def markdown_to_html(text: str) -> str:
@@ -1152,6 +1306,258 @@ class MarkdownViewerDialog(QDialog):
         self.setLayout(layout)
 
 
+class SettingsDialog(QDialog):
+    """Диалог настроек приложения."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Настройки")
+        self.setMinimumSize(500, 400)
+        self.resize(550, 450)
+        
+        # Проверяем текущую тему
+        current_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
+        is_dark = current_theme == THEME_DARK
+        
+        # Применяем тёмную тему к диалогу, если выбрана тёмная тема
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #353535;
+                    color: #ffffff;
+                }
+                QGroupBox {
+                    font-weight: bold;
+                    border: 2px solid #555555;
+                    border-radius: 5px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 5px;
+                }
+                QRadioButton {
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QSpinBox {
+                    background-color: #2a2a2a;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                    padding: 4px;
+                    border-radius: 3px;
+                }
+                QPushButton {
+                    background-color: #353535;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                    padding: 6px 20px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #2a82da;
+                    border-color: #2a82da;
+                }
+                QPushButton:pressed {
+                    background-color: #1e5fa0;
+                }
+            """)
+            # Тёмная полоса заголовка для Windows
+            app = QApplication.instance()
+            if app:
+                _set_windows_dark_title_bar(app, dark=True)
+        
+        layout = QVBoxLayout()
+        
+        # Группа "Тема"
+        theme_group = QGroupBox("Тема оформления")
+        theme_layout = QVBoxLayout()
+        
+        self.theme_button_group = QButtonGroup(self)
+        
+        self.theme_light_radio = QRadioButton("Светлая")
+        self.theme_light_radio.setChecked(current_theme == THEME_LIGHT)
+        self.theme_button_group.addButton(self.theme_light_radio, 0)
+        theme_layout.addWidget(self.theme_light_radio)
+        
+        self.theme_dark_radio = QRadioButton("Тёмная")
+        self.theme_dark_radio.setChecked(current_theme == THEME_DARK)
+        self.theme_button_group.addButton(self.theme_dark_radio, 1)
+        theme_layout.addWidget(self.theme_dark_radio)
+        
+        self.theme_system_radio = QRadioButton("Системная")
+        self.theme_system_radio.setChecked(current_theme == THEME_SYSTEM)
+        self.theme_button_group.addButton(self.theme_system_radio, 2)
+        theme_layout.addWidget(self.theme_system_radio)
+        
+        theme_group.setLayout(theme_layout)
+        layout.addWidget(theme_group)
+        
+        # Группа "Размер шрифта"
+        font_group = QGroupBox("Размер шрифта панелей")
+        font_layout = QVBoxLayout()
+        
+        font_info_layout = QHBoxLayout()
+        font_info_layout.addWidget(QLabel("Размер шрифта:"))
+        
+        # Получаем текущий размер шрифта из настроек
+        font_size_str = db.get_setting('font_size') or '12'
+        try:
+            current_font_size = int(font_size_str)
+        except ValueError:
+            current_font_size = 12
+        
+        self.font_size_spinbox = QSpinBox()
+        self.font_size_spinbox.setMinimum(8)
+        self.font_size_spinbox.setMaximum(24)
+        self.font_size_spinbox.setValue(current_font_size)
+        self.font_size_spinbox.setSuffix(" px")
+        font_info_layout.addWidget(self.font_size_spinbox)
+        font_info_layout.addStretch()
+        
+        font_layout.addLayout(font_info_layout)
+        font_layout.addWidget(QLabel("Изменения вступят в силу после перезапуска приложения."))
+        
+        font_group.setLayout(font_layout)
+        layout.addWidget(font_group)
+        
+        layout.addStretch()
+        
+        # Кнопки
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def get_selected_theme(self):
+        """Получить выбранную тему."""
+        if self.theme_light_radio.isChecked():
+            return THEME_LIGHT
+        elif self.theme_dark_radio.isChecked():
+            return THEME_DARK
+        else:
+            return THEME_SYSTEM
+    
+    def get_font_size(self):
+        """Получить выбранный размер шрифта."""
+        return self.font_size_spinbox.value()
+
+
+class AboutDialog(QDialog):
+    """Диалог 'О программе'."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("О программе")
+        self.setMinimumSize(500, 400)
+        self.resize(550, 450)
+        
+        # Проверяем текущую тему
+        current_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
+        is_dark = current_theme == THEME_DARK
+        
+        # Применяем тёмную тему к диалогу, если выбрана тёмная тема
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #353535;
+                    color: #ffffff;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: #353535;
+                    color: #ffffff;
+                    border: 1px solid #555555;
+                    padding: 6px 20px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #2a82da;
+                    border-color: #2a82da;
+                }
+                QPushButton:pressed {
+                    background-color: #1e5fa0;
+                }
+            """)
+            # Тёмная полоса заголовка для Windows
+            app = QApplication.instance()
+            if app:
+                _set_windows_dark_title_bar(app, dark=True)
+        
+        layout = QVBoxLayout()
+        
+        # Название программы
+        title_label = QLabel("ChatList")
+        title_font = QFont()
+        title_font.setPointSize(24)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # Версия
+        version_label = QLabel("Версия 1.0.0")
+        version_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(version_label)
+        
+        layout.addSpacing(20)
+        
+        # Описание
+        description_text = """
+        <p style="text-align: center;">
+            <b>ChatList</b> — это Python-приложение для сравнения ответов различных нейросетей.
+        </p>
+        
+        <p>
+            Программа позволяет отправлять один и тот же промпт в несколько нейросетей 
+            и сравнивать их ответы. Вы можете сохранять результаты в базу данных, 
+            управлять моделями и промптами, а также использовать AI-ассистента для 
+            улучшения ваших промптов.
+        </p>
+        
+        <p><b>Основные возможности:</b></p>
+        <ul>
+            <li>Отправка промптов в несколько моделей одновременно</li>
+            <li>Сравнение ответов в удобной таблице</li>
+            <li>Сохранение результатов в базу данных</li>
+            <li>Управление моделями и промптами</li>
+            <li>AI-ассистент для улучшения промптов</li>
+            <li>Экспорт результатов в Markdown и JSON</li>
+            <li>Настройка темы оформления</li>
+        </ul>
+        
+        <p><b>Технологии:</b></p>
+        <ul>
+            <li>Python 3.11+</li>
+            <li>PyQt5</li>
+            <li>SQLite</li>
+            <li>OpenRouter API</li>
+        </ul>
+        """
+        
+        description_label = QLabel(description_text)
+        description_label.setWordWrap(True)
+        description_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        layout.addWidget(description_label)
+        
+        layout.addStretch()
+        
+        # Кнопка закрытия
+        close_btn = QPushButton("Закрыть")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self.setLayout(layout)
+
+
 class MovingSegmentBar(QWidget):
     """Полоса с бегунком: слева насыщенный янтарно-зелёный, справа плавный сход в прозрачность (эффект «хвоста»)."""
     SEGMENT_WIDTH = 35  # длина бегунка в пикселях
@@ -1214,7 +1620,7 @@ class MainWindow(QMainWindow):
         # Создание интерфейса
         self.init_ui()
         
-        # Загрузка моделей
+        # Загрузка активных моделей в комбобокс
         self.load_models()
     
     def showEvent(self, event):
@@ -1246,7 +1652,7 @@ class MainWindow(QMainWindow):
         
         # Выбор сохранённого промпта
         select_layout = QHBoxLayout()
-        select_layout.addWidget(QLabel("Выбрать из истории:"))
+        select_layout.addWidget(QLabel("Активные модели:"))
         self.prompt_combo = QComboBox()
         self.prompt_combo.currentIndexChanged.connect(self.on_prompt_selected)
         select_button = QPushButton("Открыть историю")
@@ -1399,33 +1805,10 @@ class MainWindow(QMainWindow):
         # Меню "Настройки"
         settings_menu = menubar.addMenu("Настройки")
         
-        # Подменю "Тема"
-        theme_menu = settings_menu.addMenu("Тема")
-        self.theme_action_group = QActionGroup(self)
-        self.theme_action_group.setExclusive(True)
-        
-        current_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
-        
-        theme_light_action = QAction("Светлая", self)
-        theme_light_action.setCheckable(True)
-        theme_light_action.setChecked(current_theme == THEME_LIGHT)
-        theme_light_action.triggered.connect(lambda: self.set_theme(THEME_LIGHT))
-        self.theme_action_group.addAction(theme_light_action)
-        theme_menu.addAction(theme_light_action)
-        
-        theme_dark_action = QAction("Тёмная", self)
-        theme_dark_action.setCheckable(True)
-        theme_dark_action.setChecked(current_theme == THEME_DARK)
-        theme_dark_action.triggered.connect(lambda: self.set_theme(THEME_DARK))
-        self.theme_action_group.addAction(theme_dark_action)
-        theme_menu.addAction(theme_dark_action)
-        
-        theme_system_action = QAction("Системная", self)
-        theme_system_action.setCheckable(True)
-        theme_system_action.setChecked(current_theme == THEME_SYSTEM)
-        theme_system_action.triggered.connect(lambda: self.set_theme(THEME_SYSTEM))
-        self.theme_action_group.addAction(theme_system_action)
-        theme_menu.addAction(theme_system_action)
+        # Пункт "Настройки..." - открывает диалог со всеми настройками
+        settings_dialog_action = QAction("Настройки...", self)
+        settings_dialog_action.triggered.connect(self.show_settings_dialog)
+        settings_menu.addAction(settings_dialog_action)
         
         settings_menu.addSeparator()
         
@@ -1437,23 +1820,28 @@ class MainWindow(QMainWindow):
         disable_sounds_action.setChecked(sounds_enabled != 'true')
         disable_sounds_action.triggered.connect(self.toggle_sounds)
         settings_menu.addAction(disable_sounds_action)
+        
+        # Меню "Справка"
+        help_menu = menubar.addMenu("Справка")
+        about_action = QAction("О программе", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
     
     def load_models(self):
-        """Загрузить список моделей в комбобокс."""
-        models = load_models_from_db()
+        """Загрузить список активных моделей в комбобокс."""
+        # Загружаем только активные модели (is_active=1)
+        active_models = get_active_models_list()
         self.prompt_combo.clear()
-        self.prompt_combo.addItem("-- Новый промпт --", None)
-        for model in models:
+        self.prompt_combo.addItem("Активные модели", None)
+        for model in active_models:
             self.prompt_combo.addItem(model.name, model.id)
     
     def on_prompt_selected(self, index):
-        """Обработчик выбора промпта из истории."""
-        prompt_id = self.prompt_combo.itemData(index)
-        if prompt_id:
-            prompt = db.get_prompt_by_id(prompt_id)
-            if prompt:
-                self.prompt_edit.setText(prompt['prompt'])
-                self.tags_edit.setText(prompt['tags'] or '')
+        """Обработчик выбора модели из комбобокса."""
+        # Этот комбобокс теперь показывает активные модели, а не промпты
+        # Выбор модели не влияет на поле ввода промпта
+        # История промптов доступна через кнопку "Открыть историю"
+        pass
     
     def show_prompts_dialog(self):
         """Показать диалог истории промптов."""
@@ -1463,11 +1851,8 @@ class MainWindow(QMainWindow):
             if prompt:
                 self.prompt_edit.setText(prompt['prompt'])
                 self.tags_edit.setText(prompt['tags'] or '')
-                # Обновляем комбобокс
-                for i in range(self.prompt_combo.count()):
-                    if self.prompt_combo.itemData(i) == prompt['id']:
-                        self.prompt_combo.setCurrentIndex(i)
-                        break
+                # Сбрасываем выбор в комбобоксе моделей (выбираем "Новый промпт")
+                self.prompt_combo.setCurrentIndex(0)
     
     def show_improve_prompt_dialog(self):
         """Показать диалог улучшения промпта."""
@@ -1529,6 +1914,9 @@ class MainWindow(QMainWindow):
         tags = self.tags_edit.text().strip() or None
         self.current_prompt_id = db.create_prompt(prompt_text, tags)
         self.current_prompt_text = prompt_text
+        
+        # Обновляем список активных моделей в комбобоксе
+        self.load_models()
         
         # Автоматически добавляем инструкцию о форматировании Markdown
         enhanced_prompt = prompt_text + MARKDOWN_FORMATTING_INSTRUCTION
@@ -1705,6 +2093,33 @@ class MainWindow(QMainWindow):
             log_action(self.logger, "Смена темы", theme)
             self.statusBar.showMessage(f"Тема изменена: {'Светлая' if theme == THEME_LIGHT else 'Тёмная' if theme == THEME_DARK else 'Системная'}", 3000)
     
+    def show_settings_dialog(self):
+        """Показать диалог настроек."""
+        dialog = SettingsDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            # Сохраняем тему
+            selected_theme = dialog.get_selected_theme()
+            self.set_theme(selected_theme)
+            
+            # Сохраняем размер шрифта
+            font_size = dialog.get_font_size()
+            db.set_setting('font_size', str(font_size))
+            
+            log_action(self.logger, "Изменение настроек", f"Тема: {selected_theme}, Размер шрифта: {font_size}px")
+            QMessageBox.information(
+                self, 
+                "Настройки", 
+                f"Настройки сохранены.\n\n"
+                f"Тема: {'Светлая' if selected_theme == THEME_LIGHT else 'Тёмная' if selected_theme == THEME_DARK else 'Системная'}\n"
+                f"Размер шрифта: {font_size}px\n\n"
+                f"Изменение размера шрифта вступит в силу после перезапуска приложения."
+            )
+    
+    def show_about_dialog(self):
+        """Показать диалог 'О программе'."""
+        dialog = AboutDialog(self)
+        dialog.exec_()
+    
     def export_to_markdown(self):
         """Экспортировать текущие результаты в Markdown."""
         if not self.temp_results:
@@ -1772,6 +2187,18 @@ def main():
     # Применяем сохранённую тему (светлая / тёмная / системная)
     saved_theme = db.get_setting(THEME_SETTING_KEY) or THEME_SYSTEM
     apply_theme(app, saved_theme)
+    
+    # Применяем сохранённый размер шрифта
+    font_size_str = db.get_setting('font_size')
+    if font_size_str:
+        try:
+            font_size = int(font_size_str)
+            if 8 <= font_size <= 24:
+                app_font = QFont()
+                app_font.setPointSize(font_size)
+                app.setFont(app_font)
+        except ValueError:
+            pass  # Используем размер по умолчанию
     
     window = MainWindow()
     window.show()
